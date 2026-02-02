@@ -1,5 +1,6 @@
 #!/bin/bash
-# 开启错误即停止模式
+# 开启非交互模式
+export DEBIAN_FRONTEND=noninteractive
 set -e
 
 # 1. 样式定义
@@ -9,25 +10,25 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${GREEN}==============================================================${NC}"
-echo -e "${GREEN}          OpenClaw Gateway 自动化部署系统 (HansCN 版)         ${NC}"
+echo -e "${GREEN}          OpenClaw Gateway 自动化部署系统 (Hans版)         ${NC}"
 echo -e "${GREEN}==============================================================${NC}"
 
-# 2. 核心步骤 (逻辑完全保留你提供的测试通过版)
+# 2. 核心步骤 (加入 < /dev/null 防止管道截断)
 
 echo -e "\n${GREEN}[1/6] 正在安装基础工具...${NC}"
 killall -9 apt apt-get 2>/dev/null || true
-apt-get update > /dev/null 2>&1
-# 这里只装基础包，不装 tailscale 避免报错
-apt-get install -y curl net-tools gnupg2 lsb-release psmisc nginx > /dev/null 2>&1
+# 关键修复：加入 < /dev/null
+apt-get update -y < /dev/null > /dev/null 2>&1
+apt-get install -y curl net-tools gnupg2 lsb-release psmisc nginx < /dev/null > /dev/null 2>&1
 
 echo -e "\n${GREEN}[2/6] 正在配置 Docker 环境...${NC}"
 mkdir -p /etc/apt/keyrings
-# 自动读取当前 shell 的代理环境变量
 PROXY_URL=${http_proxy:-""}
+# 使用 -k 忽略证书，防止代理环境报错
 curl -fsSL -k ${PROXY_URL:+ -x $PROXY_URL} https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(ls_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-apt-get update > /dev/null 2>&1
-apt-get install -y docker-ce docker-ce-cli containerd.io > /dev/null 2>&1
+apt-get update -y < /dev/null > /dev/null 2>&1
+apt-get install -y docker-ce docker-ce-cli containerd.io < /dev/null > /dev/null 2>&1
 
 if [ -n "$PROXY_URL" ]; then
     mkdir -p /etc/systemd/system/docker.service.d
@@ -46,12 +47,12 @@ sleep 2 && tailscale up --accept-dns=false || true
 
 echo -e "\n${GREEN}[4/6] 正在通过 Git 模式安装 OpenClaw...${NC}"
 export COREPACK_ENABLE_AUTO_PIN=0
-curl -fsSL -k https://openclaw.ai/install.sh | bash -s -- --install-method git
+# 注意这里也加上了重定向保护
+curl -fsSL -k https://openclaw.ai/install.sh | bash -s -- --install-method git < /dev/null
 
 echo -e "\n${GREEN}[5/6] 正在注入安全补丁与配置...${NC}"
 FIXED_TOKEN="7d293114c449ad5fa4618a30b24ad1c4e998d9596fc6dc4f"
 mkdir -p /root/.openclaw/
-# 自动写入 json 配置，保护隐私
 cat > /root/.openclaw/openclaw.json <<JSON
 {
   "gateway": {
