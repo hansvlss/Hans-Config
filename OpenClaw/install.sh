@@ -5,7 +5,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== HansCN 2026 OpenClaw LXC 全自动通关脚本 ===${NC}"
+echo -e "${GREEN}=== HansCN 2026 OpenClaw ===${NC}"
 
 # --- [阶段一：环境初始化与智能探测] ---
 check_network() {
