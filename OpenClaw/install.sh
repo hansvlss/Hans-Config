@@ -1,95 +1,55 @@
 #!/bin/bash
-# 暂时关闭报错即退出，我们要看看报错信息到底是什么
-set +e 
-
-# 强制继承当前的代理环境变量
-export http_proxy=$http_proxy
-export https_proxy=$https_proxy
-
 GREEN='\033[0;32m'
-BOLD='\033[1m'
+RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}==============================================================${NC}"
-echo -e "${GREEN}          OpenClaw Gateway 自动化部署系统 (Hans版)         ${NC}"
-echo -e "${GREEN}==============================================================${NC}"
+echo -e "${GREEN}=== HansCN 官方模式：全自动通关版 ===${NC}"
 
-echo -e "\n${GREEN}[1/6] 正在安装基础工具...${NC}"
-# 如果安装失败，打印明确的错误提示
-apt-get update || echo -e "\033[0;31m[错误] 软件源更新失败，请检查代理是否通畅！\033[0m"
-apt-get install -y curl net-tools gnupg2 lsb-release psmisc nginx || echo -e "\033[0;31m[错误] 基础工具安装失败！\033[0m"
+# 1. 暴力清理系统锁 (解决粉丝最常见的 apt 报错)
+echo -e "${GREEN}[1/5]${NC} 正在强力清理系统环境..."
+apt-get install -y psmisc > /dev/null 2>&1 || true
+fuser -kkk /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock > /dev/null 2>&1 || true
+rm -f /var/lib/dpkg/lock* /var/lib/apt/lists/lock* /var/cache/apt/archives/lock*
+dpkg --configure -a || true
 
-# 后面步骤保持不变...
+cat <<DNS > /etc/resolv.conf
+nameserver 223.5.5.5
+nameserver 8.8.8.8
+DNS
 
-echo -e "\n${GREEN}[2/6] 正在配置 Docker 环境...${NC}"
-mkdir -p /etc/apt/keyrings
-PROXY_URL=${http_proxy:-""}
-# 使用 -k 忽略证书，防止代理环境报错
-curl -fsSL -k ${PROXY_URL:+ -x $PROXY_URL} https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(ls_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-apt-get update -y < /dev/null > /dev/null 2>&1
-apt-get install -y docker-ce docker-ce-cli containerd.io < /dev/null > /dev/null 2>&1
-
-if [ -n "$PROXY_URL" ]; then
-    mkdir -p /etc/systemd/system/docker.service.d
-    cat <<CONF > /etc/systemd/system/docker.service.d/http-proxy.conf
-[Service]
-Environment="HTTP_PROXY=$PROXY_URL"
-Environment="HTTPS_PROXY=$PROXY_URL"
-CONF
-    systemctl daemon-reload && systemctl restart docker
-fi
-
-echo -e "\n${GREEN}[3/6] 正在激活 LXC 虚拟网卡设备...${NC}"
-mkdir -p /var/run/tailscale /var/lib/tailscale
-nohup tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock > /dev/null 2>&1 &
-sleep 2 && tailscale up --accept-dns=false || true
-
-echo -e "\n${GREEN}[4/6] 正在通过 Git 模式安装 OpenClaw...${NC}"
+# 3. 核心环境变量 (解决截图中的 Corepack 提问与 Git 超时)
 export COREPACK_ENABLE_AUTO_PIN=0
-# 注意这里也加上了重定向保护
-curl -fsSL -k https://openclaw.ai/install.sh | bash -s -- --install-method git < /dev/null
+git config --global http.postBuffer 524288000
+git config --global core.compression 0
 
-echo -e "\n${GREEN}[5/6] 正在注入安全补丁与配置...${NC}"
-FIXED_TOKEN="7d293114c449ad5fa4618a30b24ad1c4e998d9596fc6dc4f"
-mkdir -p /root/.openclaw/
-cat > /root/.openclaw/openclaw.json <<JSON
-{
-  "gateway": {
-    "mode": "local",
-    "bind": "tailnet",
-    "trustedProxies": ["127.0.0.1"],
-    "auth": { "token": "$FIXED_TOKEN" },
-    "controlUi": { "allowInsecureAuth": true }
-  }
-}
-JSON
+# 4. 运行官方安装程序 (使用浅克隆加速)
+echo -e "${GREEN}[2/5]${NC} 启动官方安装脚本..."
+# 先拉取脚本，修改其中 git clone 逻辑为 --depth 1 以防 EOF 报错
+curl -fsSL -k -x "$PROXY_URL" https://openclaw.ai/install.sh > temp_install.sh
+sed -i 's/git clone/git clone --depth 1/g' temp_install.sh 
 
-echo -e "\n${GREEN}[6/6] 正在配置 Nginx 8888 端口转发...${NC}"
-cat > /etc/nginx/sites-enabled/default <<NGX
-server {
-    listen 8888;
-    location / {
-        proxy_pass http://127.0.0.1:18789;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
+bash temp_install.sh --install-method git || { echo "安装失败，请检查节点"; exit 1; }
+
+# 5. 注入 8888 协议补丁
+echo -e "${GREEN}[3/5]${NC} 正在注入 WebSocket 优化补丁..."
+apt-get install -y caddy > /dev/null 2>&1 || true
+cat <<CONF > Caddyfile
+:8888 {
+    reverse_proxy 127.0.0.1:18789 {
+        header_up Connection "upgrade"
+        header_up Upgrade "websocket"
     }
 }
-NGX
-systemctl restart nginx
+CONF
+killall caddy 2>/dev/null || true
+nohup caddy run --config Caddyfile > /dev/null 2>&1 &
 
-# 启动服务
-killall -9 openclaw 2>/dev/null || true
-nohup /root/.local/bin/openclaw gateway > /root/openclaw.log 2>&1 &
-
-# 4. 最终展示
+# 6. 完成部署
 LOCAL_IP=$(hostname -I | awk '{print $1}')
-echo -e "\n\n${BOLD}${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${GREEN}║                OPENCLAW 自动化部署圆满成功                 ║${NC}"
-echo -e "${BOLD}${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
-echo -e "\n管理地址: ${YELLOW}http://${LOCAL_IP}:8888${NC}"
-echo -e "登录密钥: ${BOLD}${GREEN}${FIXED_TOKEN}${NC}"
-echo -e "\nHansCN 提示: 脚本已完成所有配置，请直接粘贴上方 Token 登录使用。${NC}\n"
+echo -e "\n${GREEN}==============================================${NC}"
+echo -e "🎉 部署圆满成功！"
+echo -e "----------------------------------------------"
+echo -e "Web端配对地址: ${GREEN}ws://${LOCAL_IP}:8888${NC}"
+echo -e "请进入目录授权: ${YELLOW}cd openclaw && node index.js pairing approve main --all${NC}"
+echo -e "==============================================${NC}"
+rm -f temp_install.sh
