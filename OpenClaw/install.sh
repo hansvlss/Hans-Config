@@ -1,25 +1,25 @@
 #!/bin/bash
-# 开启非交互模式
-export DEBIAN_FRONTEND=noninteractive
-set -e
+# 暂时关闭报错即退出，我们要看看报错信息到底是什么
+set +e 
 
-# 1. 样式定义
+# 强制继承当前的代理环境变量
+export http_proxy=$http_proxy
+export https_proxy=$https_proxy
+
 GREEN='\033[0;32m'
 BOLD='\033[1m'
-YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${GREEN}==============================================================${NC}"
 echo -e "${GREEN}          OpenClaw Gateway 自动化部署系统 (Hans版)         ${NC}"
 echo -e "${GREEN}==============================================================${NC}"
 
-# 2. 核心步骤 (加入 < /dev/null 防止管道截断)
-
 echo -e "\n${GREEN}[1/6] 正在安装基础工具...${NC}"
-killall -9 apt apt-get 2>/dev/null || true
-# 关键修复：加入 < /dev/null
-apt-get update -y < /dev/null > /dev/null 2>&1
-apt-get install -y curl net-tools gnupg2 lsb-release psmisc nginx < /dev/null > /dev/null 2>&1
+# 如果安装失败，打印明确的错误提示
+apt-get update || echo -e "\033[0;31m[错误] 软件源更新失败，请检查代理是否通畅！\033[0m"
+apt-get install -y curl net-tools gnupg2 lsb-release psmisc nginx || echo -e "\033[0;31m[错误] 基础工具安装失败！\033[0m"
+
+# 后面步骤保持不变...
 
 echo -e "\n${GREEN}[2/6] 正在配置 Docker 环境...${NC}"
 mkdir -p /etc/apt/keyrings
