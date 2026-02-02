@@ -2,33 +2,19 @@
 set -e
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== HansCN 2026 OpenClaw ===${NC}"
+echo -e "${GREEN}=== HansCN 2026 OpenClaw 安装程序 (GitHub 同步版) ===${NC}"
 
-# --- [阶段一：环境初始化与智能探测] ---
-check_network() {
-    curl -I -s --connect-timeout 3 -m 5 https://github.com > /dev/null
-}
-
-if check_network; then
-    echo -e "${GREEN}检测到当前环境已具备出海能力，跳过代理手动配置。${NC}"
-    PROXY_URL=""
-else
-    echo -e "${YELLOW}检测到无法直连，进入代理配置模式...${NC}"
-    read -p "请输入旁路由 IP (例如 192.168.1.30): " USER_IP
-    [ -z "$USER_IP" ] && { echo -e "${RED}错误：必须输入 IP！${NC}"; exit 1; }
-    read -p "请输入代理端口 [7890]: " USER_PORT
-    USER_PORT=${USER_PORT:-7890}
-    PROXY_URL="http://${USER_IP}:${USER_PORT}"
-    export http_proxy="$PROXY_URL" https_proxy="$PROXY_URL"
-fi
+# 直接读取当前环境代理，不再询问
+PROXY_URL=${http_proxy:-""}
 
 echo -e "${GREEN}[1/6] 正在安装基础工具...${NC}"
 killall -9 apt apt-get 2>/dev/null || true
 apt-get update > /dev/null 2>&1
 apt-get install -y curl net-tools gnupg2 lsb-release psmisc nginx > /dev/null 2>&1
+
+# ... 后面接你原本测试通过的 Docker 和 OpenClaw 安装代码 ...
 
 echo -e "${GREEN}[2/6] 正在配置 Docker 环境...${NC}"
 mkdir -p /etc/apt/keyrings
