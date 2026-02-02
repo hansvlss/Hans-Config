@@ -4,14 +4,6 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${GREEN}=== HansCN 官方模式：全自动通关版 ===${NC}"
-
-# 1. 暴力清理系统锁 (解决粉丝最常见的 apt 报错)
-echo -e "${GREEN}[1/5]${NC} 正在强力清理系统环境..."
-apt-get install -y psmisc > /dev/null 2>&1 || true
-fuser -kkk /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock > /dev/null 2>&1 || true
-rm -f /var/lib/dpkg/lock* /var/lib/apt/lists/lock* /var/cache/apt/archives/lock*
-dpkg --configure -a || true
-
 cat <<DNS > /etc/resolv.conf
 nameserver 223.5.5.5
 nameserver 8.8.8.8
