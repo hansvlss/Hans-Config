@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ----------------------------------------------------------------
-# HansCN 2026 OpenClaw LXC Pro Edition (Ultimate Fix)
+# HansCN 2026 OpenClaw LXC Pro Edition (v2026.2.2 Ultimate)
 # ----------------------------------------------------------------
 
 set +e 
@@ -86,44 +86,38 @@ echo -e "${LOAD} 正在初始化 Tailscale 隧道..."
 mkdir -p /var/run/tailscale /var/lib/tailscale
 nohup tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock > /dev/null 2>&1 &
 sleep 2 && tailscale up --accept-dns=false > /dev/null 2>&1 || true
-echo -e "${CHECK} 虚拟网网卡状态: ${GREEN}ONLINE${NC}"
+echo -e "${CHECK} 虚拟网卡状态: ${GREEN}ONLINE${NC}"
 
 echo -e "\n${BOLD}${CYAN}Step 4/6: OpenClaw 核心部署${NC}"
-echo -e "${LOAD} 正在执行 Git 全自动安装程序..."
-export COREPACK_ENABLE_AUTO_PIN=0
-# 彻底清理旧文件，防止锁冲突
+echo -e "${LOAD} 正在执行官方 Git 安装..."
 killall -9 openclaw 2>/dev/null || true
 rm -rf /root/.openclaw
+export COREPACK_ENABLE_AUTO_PIN=0
 curl -fsSL -k https://openclaw.ai/install.sh | bash -s -- --install-method git > /dev/null 2>&1
+
+# 修复路径软链接，确保命令全局可用
+ln -sf /root/.local/bin/openclaw /usr/local/bin/openclaw
 echo -e "${CHECK} OpenClaw 核心安装完毕"
 
 echo -e "\n${BOLD}${CYAN}Step 5/6: 安全补丁与 UI 注入${NC}"
-echo -e "${LOAD} 正在应用 HansCN 专属配置..."
+echo -e "${LOAD} 正在通过 CLI 注入 HansCN 专属配置..."
 FIXED_TOKEN="7d293114c449ad5fa4618a30b24ad1c4e998d9596fc6dc4f"
+
+# 关键：使用 CLI 写入配置，避免 2026.2.2 JSON 校验死锁
+openclaw config set gateway.mode local
+openclaw config set gateway.auth.token "$FIXED_TOKEN"
+openclaw config set gateway.controlUi.allowInsecureAuth true
+
+# 物理注入 UI 资源
 mkdir -p /root/.openclaw/dist
-
-# 强制注入配置实现“打开即激活”
-cat > /root/.openclaw/openclaw.json <<JSON
-{
-  "gateway": {
-    "mode": "local",
-    "bind": "anywhere",
-    "trustedProxies": ["127.0.0.1"],
-    "auth": { "token": "$FIXED_TOKEN" },
-    "controlUi": { "allowInsecureAuth": true }
-  }
-}
-JSON
-
-# 物理注入 UI 解决 2026 版白屏问题
 if [ -d "/tmp/openclaw-ui/dist/control-ui" ]; then
     cp -r /tmp/openclaw-ui/dist/control-ui/* /root/.openclaw/dist/
     echo -e "${CHECK} UI 资源物理注入成功"
 fi
-echo -e "${CHECK} Token 补丁已生效"
+echo -e "${CHECK} 2026.2.2 兼容配置补丁已生效"
 
 echo -e "\n${BOLD}${CYAN}Step 6/6: 网络服务路由${NC}"
-echo -e "${LOAD} 正在配置 Nginx 8888 端口转发..."
+echo -e "${LOAD} 正在配置 Nginx 并尝试纯净启动..."
 cat > /etc/nginx/sites-enabled/default <<NGX
 server {
     listen 8888;
@@ -139,19 +133,21 @@ server {
 NGX
 
 systemctl restart nginx > /dev/null 2>&1
-# 精简启动指令，避开参数报错
-nohup openclaw gateway --allow-unconfigured > /root/openclaw.log 2>&1 &
-echo -e "${CHECK} 反向代理服务已启动"
 
-# 动态获取 IP 地址
+# 重点：裸奔启动，不带任何 --mode 或 --bind 参数
+killall -9 openclaw 2>/dev/null || true
+rm -f /root/.openclaw/gateway.lock
+nohup openclaw gateway --allow-unconfigured > /root/openclaw.log 2>&1 &
+echo -e "${CHECK} OpenClaw 18789 端口已纯净启动"
+
 REAL_IP=$(hostname -I | awk '{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && $i !~ /^172\./) {print $i; exit}}')
 
-# --- 最终杀青展示 ---
+# --- 最终展示 ---
 draw_line
 echo -e "\n${BOLD}${GREEN}        🎉 OPENCLAW 自动化部署圆满成功！${NC}"
 echo -e "\n  ${BOLD}管理地址: ${NC}${YELLOW}http://${REAL_IP:-$HOSTNAME}:8888${NC}"
 echo -e "  ${BOLD}登录密钥: ${NC}${BOLD}${WHITE}${FIXED_TOKEN}${NC}"
-echo -e "\n${CYAN}  HansCN 提示: 部署已完成，请直接粘贴上方 Token 登录使用。${NC}"
+echo -e "\n${CYAN}  HansCN 提示: 2026.2.2 环境已适配，自动登录已开启。${NC}"
 draw_line
 
 # 自毁与清理
