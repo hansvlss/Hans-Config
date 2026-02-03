@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ----------------------------------------------------------------
-# HansCN 2026 OpenClaw LXC Pro Edition (Fix Version)
+# HansCN 2026 OpenClaw LXC Pro Edition (Ultimate Fix)
 # ----------------------------------------------------------------
 
 set +e 
@@ -86,7 +86,7 @@ echo -e "${LOAD} 正在初始化 Tailscale 隧道..."
 mkdir -p /var/run/tailscale /var/lib/tailscale
 nohup tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock > /dev/null 2>&1 &
 sleep 2 && tailscale up --accept-dns=false > /dev/null 2>&1 || true
-echo -e "${CHECK} 虚拟网卡状态: ${GREEN}ONLINE${NC}"
+echo -e "${CHECK} 虚拟网网卡状态: ${GREEN}ONLINE${NC}"
 
 echo -e "\n${BOLD}${CYAN}Step 4/6: OpenClaw 核心部署${NC}"
 echo -e "${LOAD} 正在执行 Git 全自动安装程序..."
@@ -102,7 +102,7 @@ echo -e "${LOAD} 正在应用 HansCN 专属配置..."
 FIXED_TOKEN="7d293114c449ad5fa4618a30b24ad1c4e998d9596fc6dc4f"
 mkdir -p /root/.openclaw/dist
 
-# 强制写入配置文件，确保启动即 Connected
+# 强制注入配置实现“打开即激活”
 cat > /root/.openclaw/openclaw.json <<JSON
 {
   "gateway": {
@@ -115,7 +115,7 @@ cat > /root/.openclaw/openclaw.json <<JSON
 }
 JSON
 
-# 物理搬运 UI 资源，解决 2026 版参数不支持问题
+# 物理注入 UI 解决 2026 版白屏问题
 if [ -d "/tmp/openclaw-ui/dist/control-ui" ]; then
     cp -r /tmp/openclaw-ui/dist/control-ui/* /root/.openclaw/dist/
     echo -e "${CHECK} UI 资源物理注入成功"
@@ -139,10 +139,11 @@ server {
 NGX
 
 systemctl restart nginx > /dev/null 2>&1
-# 使用最纯净的启动方式，避开非法参数
+# 精简启动指令，避开参数报错
 nohup openclaw gateway --allow-unconfigured > /root/openclaw.log 2>&1 &
 echo -e "${CHECK} 反向代理服务已启动"
 
+# 动态获取 IP 地址
 REAL_IP=$(hostname -I | awk '{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && $i !~ /^172\./) {print $i; exit}}')
 
 # --- 最终杀青展示 ---
