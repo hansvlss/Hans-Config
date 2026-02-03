@@ -259,6 +259,8 @@ killall -9 openclaw 2>/dev/null || true
 nohup /root/.local/bin/openclaw gateway > /root/openclaw.log 2>&1 &
 
 echo -e "${CHECK} 反向代理服务已启动"
+REAL_IP=$(hostname -I | awk '{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && $i !~ /^172\./) {print $i; exit}}')
+
 
 # --- 最终杀青展示 (只改管理地址这一行) ---
 draw_line
