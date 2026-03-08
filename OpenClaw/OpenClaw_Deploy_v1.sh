@@ -1,155 +1,123 @@
 #!/bin/bash
 
-# ----------------------------------------------------------------
-# HansCN 2026 OpenClaw LXC Pro Edition (v2026.2.2 Ultimate)
-# ----------------------------------------------------------------
-
-set +e 
-
-# --- 颜色与图标定义 ---
+# 颜色与提示定义
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 RED='\033[0;31m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
 NC='\033[0m'
 
-CHECK="[${GREEN}✓${NC}]"
-INFO="[${BLUE}i${NC}]"
-WARN="[${YELLOW}!${NC}]"
-LOAD="[${PURPLE}*${NC}]"
-
-# --- 视觉动画函数 ---
-draw_line() {
-    echo -e "${CYAN}--------------------------------------------------------------${NC}"
+# 中文错误处理函数
+check_step() {
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[错误] $1 失败了！${NC}"
+        echo -e "${RED}建议检查：$2${NC}"
+        exit 1
+    fi
 }
 
-print_header() {
-    clear
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}  ${BOLD}${WHITE}OpenClaw Gateway${NC} ${GREEN}自动化部署系统${NC} ${YELLOW}v2026 Pro-01${NC}        ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  ${PURPLE}Powered by HansCN${NC}                                   ${CYAN}║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}>>> 开启 OpenClaw 零起点全自动部署 (含中文错误反馈)...${NC}"
+
+# 1. 自动获取当前 IP
+USER_IP=$(hostname -I | awk '{print $1}')
+[ -z "$USER_IP" ] && echo -e "${RED}[错误] 无法获取 IP，请检查网卡。${NC}" && exit 1
+echo -e "${GREEN}[成功] 当前 IP: ${USER_IP}${NC}"
+
+# 2. 配置 Node.js v22 环境
+echo "正在配置 Node.js v22 环境..."
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash - > /dev/null 2>&1
+check_step "Node.js 源配置" "请检查网络是否能连接到 nodesource.com"
+
+# 3. 安装依赖包
+echo "正在安装基础工具 (git, nginx, nodejs)..."
+apt update > /dev/null 2>&1 && apt install -y nodejs git build-essential nginx curl > /dev/null 2>&1
+check_step "系统软件安装" "请尝试运行 'apt update' 查看是否有软件源报错"
+
+# 4. 安装 OpenClaw
+echo "正在安装 OpenClaw 2026.3.2..."
+npm install -g openclaw@2026.3.2 --unsafe-perm --force --registry=https://registry.npmmirror.com > /dev/null 2>&1
+check_step "OpenClaw 程序安装" "请检查磁盘空间或 npm 镜像连接"
+
+# 5. 写入配置文件 (动态令牌)
+DYNAMIC_TOKEN=$(openssl rand -hex 24)
+mkdir -p ~/.openclaw
+rm -f ~/.openclaw/openclaw.json*
+cat > ~/.openclaw/openclaw.json <<EOF
+{
+  "gateway": {
+    "bind": "lan",
+    "port": 18789,
+    "auth": { "token": "${DYNAMIC_TOKEN}" },
+    "controlUi": {
+      "allowedOrigins": [ "https://${USER_IP}:8888", "https://127.0.0.1:8888", "http://localhost:18789" ]
+    }
+  }
 }
+EOF
+echo -e "${GREEN}[成功] 配置文件已生成。${NC}"
 
-# 1. 初始化清理
-rm -f /etc/apt/apt.conf.d/88proxy
+# 6. 配置 Nginx SSL (修复版：强制清理冲突)
+echo "正在配置 Nginx HTTPS 隧道..."
+mkdir -p /etc/nginx/ssl
+openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+  -keyout /etc/nginx/ssl/nginx.key -out /etc/nginx/ssl/nginx.crt \
+  -subj "/C=CN/ST=GD/L=GZ/O=Hans/CN=${USER_IP}" > /dev/null 2>&1
+check_step "SSL 证书生成" "请检查 openssl 是否正确安装"
 
-# 2. 打印头部
-print_header
-echo -e "${INFO} ${BOLD}系统诊断中...${NC}"
-echo -e "  ${CYAN}➤${NC} 执行路径: ${WHITE}$(pwd)${NC}"
-echo -e "  ${CYAN}➤${NC} 代理状态: ${GREEN}${http_proxy:-"未设置"}${NC}"
-FREE_MEM=$(free -m | awk '/^Mem:/{print $4}')
-echo -e "  ${CYAN}➤${NC} 剩余内存: ${GREEN}${FREE_MEM}MB${NC}"
-draw_line
-
-# 3. 代理注入
-if [ -n "$http_proxy" ]; then
-    echo "Acquire::http::Proxy \"$http_proxy\";" > /etc/apt/apt.conf.d/88proxy
-    echo -e "${CHECK} APT 代理强制注入成功"
-fi
-
-# --- 核心步骤开始 ---
-
-echo -e "\n${BOLD}${CYAN}Step 1/6: 基础工具同步${NC}"
-echo -e "${LOAD} 正在安装基础依赖包..."
-killall -9 apt apt-get 2>/dev/null || true
-apt-get update > /dev/null 2>&1
-apt-get install -y curl net-tools gnupg2 lsb-release psmisc nginx > /dev/null 2>&1
-echo -e "${CHECK} 基础组件安装完成"
-
-echo -e "\n${BOLD}${CYAN}Step 2/6: Docker 引擎配置${NC}"
-echo -e "${LOAD} 正在配置 Docker 存储库与密钥..."
-mkdir -p /etc/apt/keyrings
-PROXY_URL=${http_proxy:-""}
-curl -fsSL -k ${PROXY_URL:+ -x $PROXY_URL} https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes > /dev/null 2>&1
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-apt-get update > /dev/null 2>&1
-apt-get install -y docker-ce docker-ce-cli containerd.io > /dev/null 2>&1
-
-if [ -n "$PROXY_URL" ]; then
-    mkdir -p /etc/systemd/system/docker.service.d
-    cat <<CONF > /etc/systemd/system/docker.service.d/http-proxy.conf
-[Service]
-Environment="HTTP_PROXY=$PROXY_URL"
-Environment="HTTPS_PROXY=$PROXY_URL"
-CONF
-    systemctl daemon-reload && systemctl restart docker > /dev/null 2>&1
-fi
-echo -e "${CHECK} Docker 容器引擎就绪"
-
-echo -e "\n${BOLD}${CYAN}Step 3/6: LXC 虚拟网卡激活${NC}"
-echo -e "${LOAD} 正在初始化 Tailscale 隧道..."
-mkdir -p /var/run/tailscale /var/lib/tailscale
-nohup tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock > /dev/null 2>&1 &
-sleep 2 && tailscale up --accept-dns=false > /dev/null 2>&1 || true
-echo -e "${CHECK} 虚拟网卡状态: ${GREEN}ONLINE${NC}"
-
-echo -e "\n${BOLD}${CYAN}Step 4/6: OpenClaw 核心部署${NC}"
-echo -e "${LOAD} 正在执行官方安装程序..."
-killall -9 openclaw 2>/dev/null || true
-rm -rf /root/.openclaw
-export COREPACK_ENABLE_AUTO_PIN=0
-curl -fsSL -k https://openclaw.ai/install.sh | bash -s -- --install-method git > /dev/null 2>&1
-
-# 建立全局软链接
-ln -sf /root/.local/bin/openclaw /usr/local/bin/openclaw
-echo -e "${CHECK} OpenClaw 核心安装完毕 (v2026.2.2)"
-
-echo -e "\n${BOLD}${CYAN}Step 5/6: 官方 CLI 配置注入${NC}"
-echo -e "${LOAD} 正在通过 CLI 写入 HansCN 专属补丁..."
-FIXED_TOKEN="7d293114c449ad5fa4618a30b24ad1c4e998d9596fc6dc4f"
-
-# 关键：放弃 cat 写入 JSON，改用 CLI 注入以确保格式百分百兼容
-openclaw config set gateway.mode local
-openclaw config set gateway.auth.token "$FIXED_TOKEN"
-openclaw config set gateway.controlUi.allowInsecureAuth true
-
-# 物理注入 UI (解决 --control-ui-dist 参数报错问题)
-mkdir -p /root/.openclaw/dist
-if [ -d "/tmp/openclaw-ui/dist/control-ui" ]; then
-    cp -r /tmp/openclaw-ui/dist/control-ui/* /root/.openclaw/dist/
-    echo -e "${CHECK} UI 资源物理对齐成功"
-fi
-
-echo -e "\n${BOLD}${CYAN}Step 6/6: 网络服务路由与纯净启动${NC}"
-echo -e "${LOAD} 正在配置 Nginx 并尝试纯净启动..."
-cat > /etc/nginx/sites-enabled/default <<NGX
+# 关键修复：先清理旧配置，确保证书定义在 server 块内
+rm -rf /etc/nginx/sites-enabled/*
+cat > /etc/nginx/sites-available/openclaw <<EOF
 server {
-    listen 8888;
+    listen 8888 ssl;
+    server_name _;
+    ssl_certificate /etc/nginx/ssl/nginx.crt;
+    ssl_certificate_key /etc/nginx/ssl/nginx.key;
+
     location / {
         proxy_pass http://127.0.0.1:18789;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
+        proxy_set_header Host localhost;
+        proxy_set_header Origin http://localhost:18789;
         proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
-NGX
+EOF
+ln -sf /etc/nginx/sites-available/openclaw /etc/nginx/sites-enabled/default
+nginx -t > /dev/null 2>&1
+check_step "Nginx 语法检查" "可能是证书路径错误，请手动运行 'nginx -t' 查看第几行报错"
 
-systemctl restart nginx > /dev/null 2>&1
+systemctl restart nginx
+check_step "Nginx 服务启动" "请检查 8888 端口是否被占用 (lsof -i:8888)"
 
-# 重点：裸奔启动！不带任何会导致报错的命令行参数
+# 7. 启动并健康检查
+echo -e "${GREEN}正在启动网关...${NC}"
 killall -9 openclaw 2>/dev/null || true
-rm -f /root/.openclaw/gateway.lock
-nohup openclaw gateway --allow-unconfigured > /root/openclaw.log 2>&1 &
+openclaw gateway run --allow-unconfigured > /tmp/openclaw.log 2>&1 &
 
-echo -e "${CHECK} 内部 18789 端口已开启监听"
+# 循环检查
+V_DONE=0
+for i in {1..15}; do
+    if curl -s http://127.0.0.1:18789/__openclaw__/canvas/ > /dev/null; then
+        echo -e "${GREEN}[成功] 网关已就绪！执行最终关联...${NC}"
+        systemctl restart nginx
+        V_DONE=1
+        break
+    fi
+    echo "等待网关中... ($i/15)"
+    sleep 2
+done
 
-REAL_IP=$(hostname -I | awk '{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && $i !~ /^172\./) {print $i; exit}}')
-
-# --- 最终杀青展示 ---
-draw_line
-echo -e "\n${BOLD}${GREEN}        🎉 OPENCLAW 自动化部署圆满成功！${NC}"
-echo -e "\n  ${BOLD}管理地址: ${NC}${YELLOW}http://${REAL_IP:-$HOSTNAME}:8888${NC}"
-echo -e "  ${BOLD}登录密钥: ${NC}${BOLD}${WHITE}${FIXED_TOKEN}${NC}"
-echo -e "\n${CYAN}  HansCN 提示: 已适配 2026.2.2 环境。如果无法连接，请刷新浏览器缓存。${NC}"
-draw_line
-
-# 自毁与清理
-rm -f /etc/apt/apt.conf.d/88proxy
-rm -f $0
+if [ "$V_DONE" == "1" ]; then
+    echo -e "${GREEN}================================================"
+    echo -e "部署成功！访问地址: https://${USER_IP}:8888"
+    echo -e "登录令牌: ${DYNAMIC_TOKEN}"
+    echo -e "------------------------------------------------"
+    echo -e "后续步骤："
+    echo -e "1. 浏览器打开页面并输入令牌"
+    echo -e "2. 终端运行: openclaw devices list"
+    echo -e "3. 终端运行: openclaw devices approve <查到的ID>"
+    echo -e "================================================${NC}"
+else
+    echo -e "${RED}[错误] 网关启动超时，请查看日志: cat /tmp/openclaw.log${NC}"
+fi
